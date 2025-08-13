@@ -1,0 +1,40 @@
+name: Unity iOS Build (Xcode project)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-iOS-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-iOS-
+
+      - name: Unity - Build iOS
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: iOS
+          allowDirtyBuild: true
+          # unityVersion: 2022.3.##f1
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Upload Editor Log
+        uses: actions/upload-artifact@v4
+        with:
+          name: EditorLog-iOS
+          path: ~/Library/Logs/Unity/Editor.log
+
+      - name: Upload Xcode Project
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-XcodeProject
+          path: build/iOS

@@ -1,0 +1,40 @@
+name: Unity Android Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-Android-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-Android-
+
+      - name: Unity - Build
+        uses: game-ci/unity-builder@v4
+        with:
+          targetPlatform: Android
+          allowDirtyBuild: true
+          # unityVersion: 2022.3.##f1  # optionally pin
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Upload Editor Log
+        uses: actions/upload-artifact@v4
+        with:
+          name: EditorLog
+          path: ~/.local/share/unity3d/Editor.log
+
+      - name: Upload Android Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidBuild
+          path: build/Android
