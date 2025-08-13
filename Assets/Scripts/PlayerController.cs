@@ -9,5 +9,5 @@ public class PlayerController : MonoBehaviour
 
     void Awake() => rb = GetComponent<Rigidbody2D>();
     void Update() => input = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")).normalized;
-    void FixedUpdate() => rb.velocity = input * moveSpeed;
+    void FixedUpdate() => rb.linearVelocity = input * moveSpeed;
 }

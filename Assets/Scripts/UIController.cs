@@ -1,6 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
-
+//t
 public class UIController : MonoBehaviour
 {
     public Text scoreText;
