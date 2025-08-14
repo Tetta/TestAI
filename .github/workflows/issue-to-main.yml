@@ -68,45 +68,67 @@ jobs:
             echo "No non-workflow files to push."
           fi
 
-      - name: Apply workflow files (push with PAT)
+      - name: Apply workflow files (via GitHub API with PAT)
         if: steps.extract.outputs.found != '0'
         env:
-          PUSH_URL: ${{ format('https://x-access-token:{0}@github.com/{1}.git', secrets.WORKFLOW_TOKEN, github.repository) }}
+          OWNER: ${{ github.repository_owner }}
+          REPO:  ${{ github.event.repository.name }}
+          PAT:   ${{ secrets.WORKFLOW_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${PUSH_URL:-}" ]; then
+          if [ -z "${PAT:-}" ]; then
             echo "WORKFLOW_TOKEN not set; skipping workflow updates."
             exit 0
           fi
 
-          git config user.name  "agent-bot"
-          git config user.email "agent@users.noreply.github.com"
-
-          # КЛЮЧЕВОЕ: замещаем origin на URL с PAT и показываем, что получилось
-          git remote set-url origin "$PUSH_URL"
-          echo "== remotes after set-url =="
-          git remote -v
-
           changed=0
+
           for p in path*.txt; do
             i=${p##path}; i=${i%%.txt}
             path=$(cat "path${i}.txt")
             case "$path" in
               .github/workflows/*)
-                mkdir -p "$(dirname "$path")"
-                cp "data${i}.txt" "$path"
-                echo "Wrote workflow file: $path"
-                git add "$path"
+                data_file="data${i}.txt"
+                # base64 без переносов строк
+                content_b64=$(base64 -w 0 "$data_file")
+
+                # Узнаём, есть ли файл уже в main (чтобы передать sha при update)
+                api="https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=main"
+                status=$(curl -sS -o resp.json -w "%{http_code}" -H "Authorization: Bearer ${PAT}" -H "Accept: application/vnd.github+json" "$api")
+                sha=""
+                if [ "$status" = "200" ]; then
+                  sha=$(jq -r '.sha' resp.json)
+                fi
+
+                # Создаём/обновляем файл через Contents API
+                payload=$(jq -n \
+                  --arg msg "chore(agent): apply workflow file from issue" \
+                  --arg content "$content_b64" \
+                  --arg branch "main" \
+                  --arg sha "$sha" \
+                  '{message:$msg, content:$content, branch:$branch} + ( $sha|length>0 ? {sha:$sha} : {} )')
+
+                put_status=$(curl -sS -o put.json -w "%{http_code}" \
+                  -X PUT \
+                  -H "Authorization: Bearer ${PAT}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Content-Type: application/json" \
+                  -d "$payload" \
+                  "https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}")
+
+                if [ "$put_status" != "201" ] && [ "$put_status" != "200" ]; then
+                  echo "API error while writing ${path}: HTTP ${put_status}"
+                  cat put.json || true
+                  exit 1
+                fi
+
+                echo "Uploaded workflow via API: ${path} (HTTP ${put_status})"
                 changed=1
                 ;;
             esac
           done
 
-          if [ "$changed" = "1" ]; then
-            git commit -m "chore(agent): apply workflow files from issue"
-            # теперь origin = PAT-URL → пуш с токеном
-            git push origin HEAD:main
-          else
-            echo "No workflow files to push with PAT."
+          if [ "$changed" = "0" ]; then
+            echo "No workflow files to upload."
           fi
