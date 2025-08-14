@@ -30,18 +30,13 @@ jobs:
           set -euo pipefail
           jq -r '.comment.body // .issue.body // ""' "$GITHUB_EVENT_PATH" > body.txt
           python3 - <<'PY'
-          import re, pathlib
-          # читаем тело issue/comment
-          body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n")
-          # ищем блоки вида:
-          # ```file:relative/path.ext
-          # <content>
-          # ```
-          pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
-          for i, m in enumerate(pattern.finditer(body), start=1):
-              pathlib.Path(f"path{i:03}.txt").write_text(m.group(1).strip(), encoding="utf-8")
-              pathlib.Path(f"data{i:03}.txt").write_text(m.group(2), encoding="utf-8")
-          PY
+import re, pathlib
+body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore").replace("\r\n","\n")
+pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
+for i, m in enumerate(pattern.finditer(body), start=1):
+    pathlib.Path(f"path{i:03}.txt").write_text(m.group(1).strip(), encoding="utf-8")
+    pathlib.Path(f"data{i:03}.txt").write_text(m.group(2), encoding="utf-8")
+PY
           COUNT=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
           echo "found=${COUNT:-0}" >> "$GITHUB_OUTPUT"
 
@@ -74,12 +69,14 @@ jobs:
             echo "No non-workflow files to push."
           fi
 
-      - name: Apply workflow files (PAT with workflow scope)
+      - name: Apply workflow files (push with PAT)
         if: steps.extract.outputs.found != '0'
+        env:
+          PUSH_URL: ${{ format('https://x-access-token:{0}@github.com/{1}.git', secrets.WORKFLOW_TOKEN, github.repository) }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${PAT:-}" ]; then
+          if [ -z "${PUSH_URL:-}" ]; then
             echo "WORKFLOW_TOKEN not set; skipping workflow updates."
             exit 0
           fi
@@ -104,8 +101,8 @@ jobs:
 
           if [ "$changed" = "1" ]; then
             git commit -m "chore(agent): apply workflow files from issue"
-            # Пушим явным URL с PAT (нужно для .github/workflows/*)
-            git push "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git" HEAD:main
+            # КЛЮЧЕВОЕ: пушим по явному URL с PAT, а НЕ `origin`
+            git push "$PUSH_URL" HEAD:main
           else
             echo "No workflow files to push with PAT."
           fi
