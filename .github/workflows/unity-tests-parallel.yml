@@ -1,0 +1,49 @@
+name: Unity Tests (fast, parallel)
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  editmode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-Edit-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: Library-Edit-
+      - uses: game-ci/unity-test-runner@v4
+        with:
+          testMode: editmode
+          artifactsPath: artifacts-edit
+          customParameters: -logfile ./artifacts-edit/Editor.log -stackTraceLogType Full
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults-EditMode
+          path: artifacts-edit
+  playmode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-Play-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: Library-Play-
+      - uses: game-ci/unity-test-runner@v4
+        with:
+          testMode: playmode
+          artifactsPath: artifacts-play
+          customParameters: -logfile ./artifacts-play/Editor.log -stackTraceLogType Full
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults-PlayMode
+          path: artifacts-play
