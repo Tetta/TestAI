@@ -90,36 +90,38 @@ jobs:
             case "$path" in
               .github/workflows/*)
                 data_file="data${i}.txt"
-                # base64 без переносов строк
+                # base64 без переносов строк (GNU coreutils в ubuntu)
                 content_b64=$(base64 -w 0 "$data_file")
 
-                # Узнаём, есть ли файл уже в main (чтобы передать sha при update)
+                # Узнаём текущую sha файла (если он уже есть в main)
                 api="https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=main"
-                status=$(curl -sS -o resp.json -w "%{http_code}" -H "Authorization: Bearer ${PAT}" -H "Accept: application/vnd.github+json" "$api")
+                status=$(curl -sS -o resp.json -w "%{http_code}" \
+                  -H "Authorization: Bearer ${PAT}" \
+                  -H "Accept: application/vnd.github+json" \
+                  "$api")
                 sha=""
                 if [ "$status" = "200" ]; then
-                  sha=$(jq -r '.sha' resp.json)
+                  sha=$(grep -oE '"sha"\s*:\s*"[^"]+"' resp.json | head -n1 | sed -E 's/.*"sha"\s*:\s*"([^"]+)".*/\1/')
                 fi
 
-                # Создаём/обновляем файл через Contents API
-                payload=$(jq -n \
-                  --arg msg "chore(agent): apply workflow file from issue" \
-                  --arg content "$content_b64" \
-                  --arg branch "main" \
-                  --arg sha "$sha" \
-                  '{message:$msg, content:$content, branch:$branch} + ( $sha|length>0 ? {sha:$sha} : {} )')
+                msg="chore(agent): apply workflow file from issue"
+                if [ -n "$sha" ]; then
+                  payload=$(printf '{"message":"%s","content":"%s","branch":"main","sha":"%s"}' "$msg" "$content_b64" "$sha")
+                else
+                  payload=$(printf '{"message":"%s","content":"%s","branch":"main"}' "$msg" "$content_b64")
+                fi
 
                 put_status=$(curl -sS -o put.json -w "%{http_code}" \
                   -X PUT \
                   -H "Authorization: Bearer ${PAT}" \
                   -H "Accept: application/vnd.github+json" \
                   -H "Content-Type: application/json" \
-                  -d "$payload" \
+                  --data-binary "$payload" \
                   "https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}")
 
                 if [ "$put_status" != "201" ] && [ "$put_status" != "200" ]; then
                   echo "API error while writing ${path}: HTTP ${put_status}"
-                  cat put.json || true
+                  sed -n '1,120p' put.json || true
                   exit 1
                 fi
 
