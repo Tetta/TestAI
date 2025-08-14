@@ -80,8 +80,7 @@ jobs:
             echo "No non-workflow files to push."
           fi
 
-      - name: Apply workflow files (PAT with workflow scope)
-        if: steps.extract.outputs.found != '0'
+ - name: Apply workflow files (PAT with workflow scope)
         env:
           OWNER: ${{ github.repository_owner }}
           REPO:  ${{ github.event.repository.name }}
@@ -94,26 +93,24 @@ jobs:
             exit 0
           fi
 
-          git config user.name  "agent-bot"
-          git config user.email "agent@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git"
-
           changed=0
           for p in path*.txt; do
             idx=${p##path}; idx=${idx%%.txt}
-            path=$(sed 's/\r$//' "path${idx}.txt")
+            path=$(tr -d '\r' < "path${idx}.txt")
             if [[ "$path" == .github/workflows/* ]]; then
               mkdir -p "$(dirname "$path")"
               cp "data${idx}.txt" "$path"
-              echo "Wrote workflow $path"
+              echo "Wrote workflow file: [$path]"
               git add "$path"
               changed=1
             fi
           done
 
           if [[ "$changed" -eq 1 ]]; then
+            git config user.name  "agent-bot"
+            git config user.email "agent@users.noreply.github.com"
             git commit -m "chore(agent): apply workflow files from issue"
-            git push origin HEAD:main
+            git push "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git" HEAD:main
           else
             echo "No workflow files found to push with PAT."
           fi
