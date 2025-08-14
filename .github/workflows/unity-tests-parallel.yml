@@ -9,12 +9,27 @@ on:
 jobs:
   editmode:
     name: EditMode
-    if: ${{ secrets.UNITY_LICENSE != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # Проверяем, что секрет с лицензией реально присутствует
+      - name: Check license presence
+        id: lic
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -n "${UNITY_LICENSE:-}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+            echo "License: present"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "License: NOT set, Unity steps will be skipped"
+          fi
+
       - name: Cache Library (EditMode)
+        if: steps.lic.outputs.has == 'true'
         uses: actions/cache@v3
         with:
           path: Library
@@ -23,6 +38,7 @@ jobs:
             Library-Edit-
 
       - name: Run EditMode tests
+        if: steps.lic.outputs.has == 'true'
         uses: game-ci/unity-test-runner@v4
         with:
           unityVersion: 6000.1.16f1
@@ -33,7 +49,7 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
       - name: Upload Artifacts (EditMode)
-        if: always()
+        if: always() && steps.lic.outputs.has == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: TestResults-EditMode
@@ -41,12 +57,26 @@ jobs:
 
   playmode:
     name: PlayMode
-    if: ${{ secrets.UNITY_LICENSE != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check license presence
+        id: lic
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -n "${UNITY_LICENSE:-}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+            echo "License: present"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "License: NOT set, Unity steps will be skipped"
+          fi
+
       - name: Cache Library (PlayMode)
+        if: steps.lic.outputs.has == 'true'
         uses: actions/cache@v3
         with:
           path: Library
@@ -55,6 +85,7 @@ jobs:
             Library-Play-
 
       - name: Run PlayMode tests
+        if: steps.lic.outputs.has == 'true'
         uses: game-ci/unity-test-runner@v4
         with:
           unityVersion: 6000.1.16f1
@@ -65,7 +96,7 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
       - name: Upload Artifacts (PlayMode)
-        if: always()
+        if: always() && steps.lic.outputs.has == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: TestResults-PlayMode
