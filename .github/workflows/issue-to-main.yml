@@ -1,74 +1,137 @@
-name: Apply file blocks from issue to main
+name: Apply file blocks from Issue -> MAIN
 
 on:
+  issues:
+    types: [opened, edited]
   issue_comment:
     types: [created]
-  issues:
-    types: [edited]
+  workflow_dispatch:
 
 permissions:
   contents: write
-  issues: read
 
 jobs:
   apply:
-    if: |
-      github.event_name == 'issue_comment' ||
-      github.event_name == 'issues'
     runs-on: ubuntu-latest
     env:
       OWNER: ${{ github.repository_owner }}
-      REPO: ${{ github.event.repository.name }}
-      PAT: ${{ secrets.WORKFLOW_TOKEN }}
+      REPO:  ${{ github.event.repository.name }}
+      PAT:   ${{ secrets.WORKFLOW_TOKEN }}
     steps:
-      - name: Checkout repository
+      - name: Checkout main
         uses: actions/checkout@v4
-
-      - name: Extract code blocks from issue
-        uses: actions/github-script@v7
         with:
-          script: |
-            const fs = require('fs');
-            const body = context.payload.comment?.body || context.payload.issue?.body || '';
-            const regex = /file:(.*?)\n+```[\s\S]*?```/g;
-            let match;
-            let idx = 1;
-            while ((match = regex.exec(body)) !== null) {
-              const path = match[1].trim();
-              const content = match[0].replace(/^file:.*?\n+```/, '').replace(/```$/, '');
-              fs.writeFileSync(`path${idx}.txt`, path);
-              fs.writeFileSync(`data${idx}.txt`, content);
-              idx++;
-            }
+          ref: main
 
-      - name: Apply changes
+      - name: Extract file blocks from issue/comment
+        id: extract
+        shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${PAT:-}" ]]; then
-            echo "WORKFLOW_TOKEN not set; skipping .github/workflows/* updates."
+          BODY="$(jq -r '.comment.body // .issue.body // ""' "$GITHUB_EVENT_PATH")"
+          printf '%s\n' "$BODY" > body.txt
+
+          # Нормализуем переводы строк (CRLF -> LF)
+          sed -i 's/\r$//' body.txt
+
+          # Парсим блоки строго формата:
+          # ```file:.github/workflows/file.yml
+          # <содержимое>
+          # ```
+          # Разрешаем пробел после "file:" и до пути.
+          awk '
+            BEGIN {in=0; idx=0}
+            /^```/ {
+              if (!in) {
+                if (match($0, /^```file:[[:space:]]*([^\r\n]+)$/, m)) {
+                  in=1; idx++; path=m[1];
+                  printf "%s\n", path > sprintf("path%03d.txt", idx); next
+                } else { next }
+              } else { in=0; next }
+            }
+            { if (in) print > sprintf("data%03d.txt", idx) }
+          ' body.txt
+
+          count=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
+          echo "found=$count" >> "$GITHUB_OUTPUT"
+
+          echo "::group::Debug preview"
+          echo "First 200 chars of body:"
+          head -c 200 body.txt || true
+          echo
+          echo "Found $count file blocks:"
+          for p in path*.txt 2>/dev/null; do
+            echo "- $(cat "$p")"
+          done
+          echo "::endgroup::"
+
+          # не падаем, даже если блоков нет — просто завершимся раньше
+          if [ "$count" = "0" ]; then
+            echo "No file blocks found. Add a comment with a block starting with: \`\`\`file:<relative-path>\n<content>\n\`\`\`"
             exit 0
           fi
-          
+
+      - name: Apply non-workflow files (via GITHUB_TOKEN)
+        if: steps.extract.outputs.found != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name  "agent-bot"
           git config user.email "agent@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git"
-          
+
           changed=0
           for p in path*.txt; do
-            idx=${p##path}; idx=${idx%%.txt}
-            path=$(sed 's/\r$//' "path${idx}.txt")
-            if [[ "$path" == .github/workflows/* ]]; then
-              mkdir -p "$(dirname "$path")"
-              cp "data${idx}.txt" "$path"
-              echo "Wrote workflow $path"
-              git add "$path"
-              changed=1
-            fi
+            i=${p##path}; i=${i%%.txt}
+            path=$(cat "path${i}.txt")
+            case "$path" in
+              .github/workflows/*) continue ;;
+            esac
+            mkdir -p "$(dirname "$path")"
+            cp "data${i}.txt" "$path"
+            echo "Wrote $path"
+            git add "$path"
+            changed=1
           done
-          
-          if [[ "$changed" -eq 1 ]]; then
-            git commit -m "chore(agent): apply workflow files from issue"
+
+          if [ "$changed" = "1" ]; then
+            git commit -m "chore(agent): apply non-workflow files from issue"
             git push origin HEAD:main
           else
-            echo "No workflow files found to push with PAT."
+            echo "No non-workflow files to push."
+          fi
+
+      - name: Apply workflow files (requires PAT with workflow scope)
+        if: steps.extract.outputs.found != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${PAT:-}" ]; then
+            echo "WORKFLOW_TOKEN not set; skipping workflow updates."
+            exit 0
+          fi
+
+          git config user.name  "agent-bot"
+          git config user.email "agent@users.noreply.github.com"
+
+          changed=0
+          for p in path*.txt; do
+            i=${p##path}; i=${i%%.txt}
+            path=$(cat "path${i}.txt")
+            case "$path" in
+              .github/workflows/*)
+                mkdir -p "$(dirname "$path")"
+                cp "data${i}.txt" "$path"
+                echo "Wrote workflow file: $path"
+                git add "$path"
+                changed=1
+                ;;
+            esac
+          done
+
+          if [ "$changed" = "1" ]; then
+            git commit -m "chore(agent): apply workflow files from issue"
+            # ВАЖНО: пушим по URL с PAT, чтобы были права на workflows
+            git push "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git" HEAD:main
+          else
+            echo "No workflow files to push with PAT."
           fi
