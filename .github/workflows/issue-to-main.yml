@@ -82,8 +82,11 @@ jobs:
 
           git config user.name  "agent-bot"
           git config user.email "agent@users.noreply.github.com"
-          # КЛЮЧЕВОЕ: заменяем origin на URL с PAT
+
+          # КЛЮЧЕВОЕ: замещаем origin на URL с PAT и показываем, что получилось
           git remote set-url origin "$PUSH_URL"
+          echo "== remotes after set-url =="
+          git remote -v
 
           changed=0
           for p in path*.txt; do
@@ -102,7 +105,7 @@ jobs:
 
           if [ "$changed" = "1" ]; then
             git commit -m "chore(agent): apply workflow files from issue"
-            # теперь origin = PAT-URL → пуш с нужными правами
+            # теперь origin = PAT-URL → пуш с токеном
             git push origin HEAD:main
           else
             echo "No workflow files to push with PAT."
