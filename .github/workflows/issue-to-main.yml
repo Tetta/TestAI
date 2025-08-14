@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  workflows: write   # <— ВАЖНО: даём право создавать/обновлять workflow-файлы
 
 jobs:
   apply-to-main:
@@ -29,13 +30,12 @@ jobs:
           BODY=$(jq -r '.comment.body // .issue.body' "$GITHUB_EVENT_PATH")
           printf '%s\n' "$BODY" > body.txt
 
-          # Вытаскиваем все блоки вида: ```file:PATH \n <контент> \n ```
+          # Вытаскиваем блоки формата: ```file:PATH \n <контент> \n ```
           awk '
             BEGIN {inb=0; idx=0}
             /^```/ {
               if (!inb) {
-                line=$0
-                if (match(line, /^```file:([^\r\n]+)$/, m)) {
+                if (match($0, /^```file:([^\r\n]+)$/, m)) {
                   inb=1; path=m[1]; idx++; printf "%s\n", path > sprintf("path%03d.txt", idx); next
                 } else { next }
               } else { inb=0; next }
@@ -45,10 +45,7 @@ jobs:
 
           count=$(ls -1 data*.txt 2>/dev/null | wc -l | tr -d " ")
           echo "found=$count" >> $GITHUB_OUTPUT
-          echo "Found $count file-block(s)."
-          if [ "$count" = "0" ]; then
-            exit 1
-          fi
+          [ "$count" != "0" ]
 
       - name: Apply & push to main
         if: steps.extract.outputs.found != '0'
@@ -60,7 +57,7 @@ jobs:
 
           for p in path*.txt; do
             idx=${p##path}; idx=${idx%%.txt}
-            path=$(cat "path${idx}.txt")
+            path=$(sed 's/\r$//' "path${idx}.txt") # срежем CR если вставили из Windows
             mkdir -p "$(dirname "$path")"
             cp "data${idx}.txt" "$path"
             echo "Wrote $path"
