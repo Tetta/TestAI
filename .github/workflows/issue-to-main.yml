@@ -1,0 +1,39 @@
+name: Apply patch from Issue -> MAIN
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-to-main:
+    if: >-
+      contains(github.event.issue.title, '[PATCH:MAIN]') ||
+      (github.event.action == 'labeled' && github.event.label.name == 'apply-to-main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Extract patch
+        run: |
+          echo "${{ github.event.issue.body }}" > body.txt
+          awk '
+            /```patch/ {inb=1; next}
+            /```/ && inb==1 {exit}
+            inb==1 {print}
+          ' body.txt > changes.patch
+          test -s changes.patch
+
+      - name: Apply & push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name  "agent-bot"
+          git config user.email "agent@users.noreply.github.com"
+          git apply --whitespace=fix changes.patch
+          git add -A
+          git commit -m "chore(agent): apply patch to main from issue #${{ github.event.issue.number }}"
+          git push origin HEAD:main
