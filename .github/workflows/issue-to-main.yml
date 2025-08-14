@@ -23,51 +23,43 @@ jobs:
         with:
           ref: main
 
-      - name: Extract file blocks from issue/comment
+      - name: Extract file blocks (python)
         id: extract
         shell: bash
         run: |
           set -euo pipefail
           BODY="$(jq -r '.comment.body // .issue.body // ""' "$GITHUB_EVENT_PATH")"
           printf '%s\n' "$BODY" > body.txt
-
-          # Нормализуем переводы строк (CRLF -> LF)
-          sed -i 's/\r$//' body.txt
-
-          # Парсим блоки строго формата:
-          # ```file:.github/workflows/file.yml
-          # <содержимое>
-          # ```
-          # Разрешаем пробел после "file:" и до пути.
-          awk '
-            BEGIN {in=0; idx=0}
-            /^```/ {
-              if (!in) {
-                if (match($0, /^```file:[[:space:]]*([^\r\n]+)$/, m)) {
-                  in=1; idx++; path=m[1];
-                  printf "%s\n", path > sprintf("path%03d.txt", idx); next
-                } else { next }
-              } else { in=0; next }
-            }
-            { if (in) print > sprintf("data%03d.txt", idx) }
-          ' body.txt
-
-          count=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
-          echo "found=$count" >> "$GITHUB_OUTPUT"
-
-          echo "::group::Debug preview"
-          echo "First 200 chars of body:"
-          head -c 200 body.txt || true
-          echo
-          echo "Found $count file blocks:"
-          for p in path*.txt 2>/dev/null; do
-            echo "- $(cat "$p")"
-          done
-          echo "::endgroup::"
-
-          # не падаем, даже если блоков нет — просто завершимся раньше
-          if [ "$count" = "0" ]; then
-            echo "No file blocks found. Add a comment with a block starting with: \`\`\`file:<relative-path>\n<content>\n\`\`\`"
+          python3 - << 'PY'
+import re, pathlib
+body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore")
+# Нормализуем \r\n -> \n
+body = body.replace("\r\n", "\n")
+# Ищем блоки ```file:... \n ... \n```
+pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
+matches = list(pattern.finditer(body))
+for i, m in enumerate(matches, start=1):
+    path = m.group(1).strip()
+    data = m.group(2)
+    pathlib.Path(f"path{i:03}.txt").write_text(path, encoding="utf-8")
+    pathlib.Path(f"data{i:03}.txt").write_text(data, encoding="utf-8")
+print(f"FOUND_BLOCKS={len(matches)}")
+PY
+          # экспортируем число найденных блоков в outputs
+          FOUND=$(grep -oE 'FOUND_BLOCKS=[0-9]+' <<< "$(tail -n 1 ./-)" || true)
+          # Если по какой-то причине grep не нашёл, посчитаем по файлам
+          if [ -z "${FOUND}" ]; then
+            COUNT=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
+          else
+            COUNT=${FOUND#FOUND_BLOCKS=}
+          fi
+          echo "found=${COUNT:-0}" >> "$GITHUB_OUTPUT"
+          echo "Found ${COUNT:-0} file block(s)."
+          if [ "${COUNT:-0}" = "0" ]; then
+            echo "No file blocks found. Add a comment with:"
+            echo '```file:.github/workflows/your.yml'
+            echo '<file content>'
+            echo '```'
             exit 0
           fi
 
@@ -130,7 +122,7 @@ jobs:
 
           if [ "$changed" = "1" ]; then
             git commit -m "chore(agent): apply workflow files from issue"
-            # ВАЖНО: пушим по URL с PAT, чтобы были права на workflows
+            # пушим по URL с PAT, чтобы были права на workflows
             git push "https://x-access-token:${PAT}@github.com/${OWNER}/${REPO}.git" HEAD:main
           else
             echo "No workflow files to push with PAT."
