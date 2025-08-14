@@ -2,35 +2,71 @@ name: Unity Tests (fast, parallel)
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  test-editmode:
+  editmode:
+    name: EditMode
     if: ${{ secrets.UNITY_LICENSE != '' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: game-ci/unity-test-runner@v4
+      - uses: actions/checkout@v4
+
+      - name: Cache Library (EditMode)
+        uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-Edit-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-Edit-
+
+      - name: Run EditMode tests
+        uses: game-ci/unity-test-runner@v4
         with:
           unityVersion: 6000.1.16f1
           testMode: editmode
+          artifactsPath: artifacts-edit
+          customParameters: -logfile ./artifacts-edit/Editor.log -stackTraceLogType Full
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-  test-playmode:
+      - name: Upload Artifacts (EditMode)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults-EditMode
+          path: artifacts-edit
+
+  playmode:
+    name: PlayMode
     if: ${{ secrets.UNITY_LICENSE != '' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: game-ci/unity-test-runner@v4
+      - uses: actions/checkout@v4
+
+      - name: Cache Library (PlayMode)
+        uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-Play-${{ hashFiles('**/Packages/packages-lock.json') }}
+          restore-keys: |
+            Library-Play-
+
+      - name: Run PlayMode tests
+        uses: game-ci/unity-test-runner@v4
         with:
           unityVersion: 6000.1.16f1
           testMode: playmode
+          artifactsPath: artifacts-play
+          customParameters: -logfile ./artifacts-play/Editor.log -stackTraceLogType Full
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      - name: Upload Artifacts (PlayMode)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults-PlayMode
+          path: artifacts-play
