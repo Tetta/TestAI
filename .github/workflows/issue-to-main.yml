@@ -30,18 +30,18 @@ jobs:
           set -euo pipefail
           jq -r '.comment.body // .issue.body // ""' "$GITHUB_EVENT_PATH" > body.txt
           python3 - <<'PY'
-import re, pathlib
-# читаем тело issue/comment
-body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n")
-# ищем блоки вида:
-# ```file:relative/path.ext
-# <content>
-# ```
-pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
-for i, m in enumerate(pattern.finditer(body), start=1):
-    pathlib.Path(f"path{i:03}.txt").write_text(m.group(1).strip(), encoding="utf-8")
-    pathlib.Path(f"data{i:03}.txt").write_text(m.group(2), encoding="utf-8")
-PY
+          import re, pathlib
+          # читаем тело issue/comment
+          body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n")
+          # ищем блоки вида:
+          # ```file:relative/path.ext
+          # <content>
+          # ```
+          pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
+          for i, m in enumerate(pattern.finditer(body), start=1):
+              pathlib.Path(f"path{i:03}.txt").write_text(m.group(1).strip(), encoding="utf-8")
+              pathlib.Path(f"data{i:03}.txt").write_text(m.group(2), encoding="utf-8")
+          PY
           COUNT=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
           echo "found=${COUNT:-0}" >> "$GITHUB_OUTPUT"
 
