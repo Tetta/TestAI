@@ -1,39 +1,57 @@
 name: Apply patch from Issue -> MAIN
+
 on:
   issues:
     types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
 
 jobs:
   apply-to-main:
-    if: >-
-      contains(github.event.issue.title, '[PATCH:MAIN]') ||
-      (github.event.action == 'labeled' && github.event.label.name == 'apply-to-main')
+    # три триггера: заголовок [PATCH:MAIN], метка apply-to-main, либо новый комментарий с блоком ```patch
+    if: >
+      (github.event_name == 'issues' && contains(github.event.issue.title, '[PATCH:MAIN]')) ||
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'apply-to-main') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '```patch'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Extract patch
+      - name: Extract patch from issue/comment body
+        id: grab
+        shell: bash
         run: |
-          echo "${{ github.event.issue.body }}" > body.txt
+          set -euo pipefail
+          BODY=$(jq -r '.comment.body // .issue.body' "$GITHUB_EVENT_PATH")
+          # НИЧЕГО не «echo»-им в инлайн-скрипт — только записываем как есть:
+          printf '%s\n' "$BODY" > body.txt
+
+          # вытащим ПЕРВЫЙ блок между ```patch и ```
           awk '
             /```patch/ {inb=1; next}
             /```/ && inb==1 {exit}
             inb==1 {print}
           ' body.txt > changes.patch
+
+          echo "::group::Patch preview (first 50 lines)"
+          head -n 50 changes.patch || true
+          echo "::endgroup::"
+
+          # убеждаемся, что файл непустой
           test -s changes.patch
 
-      - name: Apply & push
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Apply & push to main
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name  "agent-bot"
           git config user.email "agent@users.noreply.github.com"
           git apply --whitespace=fix changes.patch
           git add -A
-          git commit -m "chore(agent): apply patch to main from issue #${{ github.event.issue.number }}"
+          git commit -m "chore(agent): apply patch to main from issue #${GITHUB_EVENT_NUMBER:-manual}"
           git push origin HEAD:main
