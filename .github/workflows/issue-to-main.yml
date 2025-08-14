@@ -1,4 +1,4 @@
-name: Apply patch from Issue -> MAIN
+name: Apply file blocks from Issue -> MAIN
 
 on:
   issues:
@@ -21,57 +21,59 @@ jobs:
         with:
           ref: main
 
-      - name: Extract patch from issue/comment body
-        id: grab
+      - name: Extract code blocks
+        id: extract
         shell: bash
         run: |
           set -euo pipefail
           BODY=$(jq -r '.comment.body // .issue.body' "$GITHUB_EVENT_PATH")
           printf '%s\n' "$BODY" > body.txt
 
-          # 1) пробуем ```patch
+          # Вытащим все код-блоки """file:PATH ... """
+          # Каждый блок сохраняем во временный файл: path<idx>.txt и data<idx>.txt
           awk '
-            /```patch/ {inb=1; next}
-            /```/ && inb==1 {exit}
-            inb==1 {print}
-          ' body.txt > changes.patch
+            BEGIN {inb=0; idx=0}
+            /^```/ {
+              if (!inb) {
+                line=$0
+                if (match(line, /^```file:([^\r\n]+)$/, m)) {
+                  inb=1; path=m[1]; idx++; printf "%s\n", path > sprintf("path%03d.txt", idx); next
+                } else {
+                  next
+                }
+              } else { inb=0; next }
+            }
+            { if (inb) print > sprintf("data%03d.txt", idx) }
+          ' body.txt
 
-          # 2) если пусто — пробуем ```diff
-          if [ ! -s changes.patch ]; then
-            awk '
-              /```diff/ {inb=1; next}
-              /```/ && inb==1 {exit}
-              inb==1 {print}
-            ' body.txt > changes.patch || true
-          fi
+          count=$(ls -1 data*.txt 2>/dev/null | wc -l | tr -d " ")
+          echo "found=$count" >> $GITHUB_OUTPUT
+          echo "Found $count file-block(s)."
 
-          # 3) если всё ещё пусто — берём ПЕРВЫЙ любой код-блок ```
-          if [ ! -s changes.patch ]; then
-            awk '
-              /```/ { if(inb==0){inb=1; next} else if(inb==1){exit} }
-              inb==1 {print}
-            ' body.txt > changes.patch || true
-          fi
-
-          echo "::group::Patch preview (first 50 lines)"
-          head -n 50 changes.patch || true
-          echo "::endgroup::"
-
-          if [ ! -s changes.patch ]; then
-            echo "No code block found. Please paste the patch inside a code fence like:"
-            echo "```patch"
-            echo "<your unified diff here>"
-            echo "```"
+          if [ "$count" = "0" ]; then
+            echo "No ```file:PATH code blocks found. Please wrap content like:"
+            echo '```file:.github/workflows/my.yml'
+            echo '<file content here>'
+            echo '```'
             exit 1
           fi
 
-      - name: Apply & push to main
+      - name: Apply files and push
+        if: steps.extract.outputs.found != '0'
         shell: bash
         run: |
           set -euo pipefail
           git config user.name  "agent-bot"
           git config user.email "agent@users.noreply.github.com"
-          git apply --whitespace=fix changes.patch
-          git add -A
-          git commit -m "chore(agent): apply patch to main from issue #${GITHUB_EVENT_NUMBER:-manual}"
+
+          for p in path*.txt; do
+            idx=${p##path}; idx=${idx%%.txt}
+            path=$(cat "path${idx}.txt")
+            mkdir -p "$(dirname "$path")"
+            cp "data${idx}.txt" "$path"
+            echo "Wrote $path"
+            git add "$path"
+          done
+
+          git commit -m "chore(agent): apply file blocks from issue #${GITHUB_EVENT_NUMBER:-manual}"
           git push origin HEAD:main
