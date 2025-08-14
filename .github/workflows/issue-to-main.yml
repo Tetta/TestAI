@@ -16,29 +16,28 @@ jobs:
     env:
       OWNER: ${{ github.repository_owner }}
       REPO:  ${{ github.event.repository.name }}
-      PAT:   ${{ secrets.WORKFLOW_TOKEN }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Extract file blocks (python)
+      # Парсим комментарий/issue телом: ищем блоки ```file:relative/path\n<content>\n```
+      - name: Extract file blocks
         id: extract
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -r '.comment.body // .issue.body // ""' "$GITHUB_EVENT_PATH" > body.txt
-          python3 - <<'PY'
-import re, pathlib
-body = pathlib.Path("body.txt").read_text(encoding="utf-8", errors="ignore").replace("\r\n","\n")
-pattern = re.compile(r"```file:\s*([^\n]+)\n(.*?)```", re.DOTALL)
-for i, m in enumerate(pattern.finditer(body), start=1):
-    pathlib.Path(f"path{i:03}.txt").write_text(m.group(1).strip(), encoding="utf-8")
-    pathlib.Path(f"data{i:03}.txt").write_text(m.group(2), encoding="utf-8")
-PY
-          COUNT=$(ls -1 path*.txt 2>/dev/null | wc -l | tr -d ' ')
-          echo "found=${COUNT:-0}" >> "$GITHUB_OUTPUT"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = (context.payload.comment?.body || context.payload.issue?.body || '').replace(/\r\n/g, '\n');
+            const re = /```file:\s*([^\n]+)\n([\s\S]*?)```/g;
+            let i = 0, m;
+            while ((m = re.exec(body)) !== null) {
+              i++;
+              fs.writeFileSync(`path${String(i).padStart(3,'0')}.txt`, m[1].trim());
+              fs.writeFileSync(`data${String(i).padStart(3,'0')}.txt`, m[2]);
+            }
+            core.setOutput('found', String(i));
 
       - name: Apply non-workflow files (GITHUB_TOKEN)
         if: steps.extract.outputs.found != '0'
@@ -101,7 +100,6 @@ PY
 
           if [ "$changed" = "1" ]; then
             git commit -m "chore(agent): apply workflow files from issue"
-            # КЛЮЧЕВОЕ: пушим по явному URL с PAT, а НЕ `origin`
             git push "$PUSH_URL" HEAD:main
           else
             echo "No workflow files to push with PAT."
