@@ -1,0 +1,7 @@
+{
+  "name": "Tests.PlayMode",
+  "optionalUnityReferences": [ "TestAssemblies" ],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "autoReferenced": true
+}
